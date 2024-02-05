@@ -1,33 +1,21 @@
-    @property
-    def state(self) -> ComponentUpgradeState:
-        if all(
-            [
-                self.db_creation_state == OperationState.SUCCESS,
-                self.db_refresh_state == OperationState.SUCCESS,
-                self.secret_update_state == OperationState.SUCCESS,
-                self.kube_restart_state == OperationState.SUCCESS,
-            ]
-        ):
-            state = ComponentUpgradeState.UPGRADED
-        elif any(
-            [
-                self.db_creation_state == OperationState.FAILED,
-                self.db_refresh_state == OperationState.FAILED,
-                self.secret_update_state == OperationState.FAILED,
-                self.kube_restart_state == OperationState.FAILED,
-            ]
-        ):
-            state = ComponentUpgradeState.UPGRADE_FAILED
-        elif all(
-            [
-                self.db_creation_state == OperationState.PENDING,
-                self.db_refresh_state == OperationState.PENDING,
-                self.secret_update_state == OperationState.PENDING,
-                self.kube_restart_state == OperationState.PENDING,
-            ]
-        ):
-            state = ComponentUpgradeState.UPGRADING
-        else:
-            state = ComponentUpgradeState.UPGRADE_REQUESTED
+import re
 
-        return state
+def increment_cluster_alias(cluster_alias):
+    pattern = r'(-\d+)?$'
+    match = re.search(pattern, cluster_alias)
+
+    if match:
+        suffix = match.group(1)
+        if suffix is None:
+            new_suffix = 1
+        else:
+            current_suffix = int(suffix[1:])
+            new_suffix = (current_suffix + 1) % 100  # Restart from -1 if current suffix is -99
+
+        new_alias = re.sub(pattern, f'-{new_suffix}', cluster_alias)
+        return new_alias
+
+# Example usage:
+cluster_alias = "a_5ety5g65-5"
+new_alias = increment_cluster_alias(cluster_alias)
+print(new_alias)
