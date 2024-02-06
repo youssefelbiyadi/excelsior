@@ -1,21 +1,63 @@
-import re
+from enum import Enum
+from time import sleep
 
-def increment_cluster_alias(cluster_alias):
-    pattern = r'(-\d+)?$'
-    match = re.search(pattern, cluster_alias)
 
-    if match:
-        suffix = match.group(1)
-        if suffix is None:
-            new_suffix = 1
+class OperationState(Enum):
+    PENDING = "PENDING"
+    SUCCESS =  "SUCCESS"
+    FAILED = "FAILED"
+
+class OperationStateManager:
+    def __init__(self, model, service, state_attr):
+        self.model = model
+        self.service = service
+        self.state_attr = state_attr
+
+    def __enter__(self):
+        print(f"Updating {self.model.__class__.__name__} attr {self.state_attr} to {OperationState.PENDING}")
+        setattr(self.model, self.state_attr, OperationState.PENDING)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is not None:
+            print(f"Updating {self.model.__class__.__name__} attr {self.state_attr} to {OperationState.FAILED}")
+            setattr(self.model, self.state_attr, OperationState.FAILED)
+            # * SHOULD I RAISE EXCEPTION HERE: I think no
+
         else:
-            current_suffix = int(suffix[1:])
-            new_suffix = (current_suffix + 1) % 100  # Restart from -1 if current suffix is -99
+            print(f"Updating {self.model.__class__.__name__} attr {self.state_attr} to {OperationState.SUCCESS}")
+            setattr(self.model, self.state_attr, OperationState.SUCCESS)
 
-        new_alias = re.sub(pattern, f'-{new_suffix}', cluster_alias)
-        return new_alias
+# Example of SomeModel
+class SomeModel:
+    def __init__(self):
+        self.state = None
 
-# Example usage:
-cluster_alias = "a_5ety5g65-5"
-new_alias = increment_cluster_alias(cluster_alias)
-print(new_alias)
+# Example of SomeService
+class SomeService:
+    def perform_operation(self):
+        print("Performing some operation...")
+        raise Exception("MY Exception")
+        return "Operation result"
+
+# Example of usage
+if __name__ == "__main__":
+    model = SomeModel()
+    service = SomeService()
+
+    def perform_action():
+        with OperationStateManager(model, service, "state") as state_manager:
+            try:
+                print(model.state)
+                service.perform_operation()
+            except Exception as e:
+                print(model.state)
+                raise Exception(f"An exception occurred: {e}")
+            
+            print(f"Not modifiying state: {model.state}")
+        
+        # Caution: Should have the right indentation
+        print(f"Modifying state => Final state: {model.state}")
+        return model
+
+perform_action()
