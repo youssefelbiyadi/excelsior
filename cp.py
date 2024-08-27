@@ -1,63 +1,33 @@
-from enum import Enum
-from time import sleep
+import logging
+import functools
 
+def no_logging(method):
+    """Decorator to mark a method as excluded from logging."""
+    method.__no_logging__ = True
+    return method
 
-class OperationState(Enum):
-    PENDING = "PENDING"
-    SUCCESS =  "SUCCESS"
-    FAILED = "FAILED"
-
-class OperationStateManager:
-    def __init__(self, model, service, state_attr):
-        self.model = model
-        self.service = service
-        self.state_attr = state_attr
-
-    def __enter__(self):
-        print(f"Updating {self.model.__class__.__name__} attr {self.state_attr} to {OperationState.PENDING}")
-        setattr(self.model, self.state_attr, OperationState.PENDING)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        if exc_type is not None:
-            print(f"Updating {self.model.__class__.__name__} attr {self.state_attr} to {OperationState.FAILED}")
-            setattr(self.model, self.state_attr, OperationState.FAILED)
-            # * SHOULD I RAISE EXCEPTION HERE: I think no
-
-        else:
-            print(f"Updating {self.model.__class__.__name__} attr {self.state_attr} to {OperationState.SUCCESS}")
-            setattr(self.model, self.state_attr, OperationState.SUCCESS)
-
-# Example of SomeModel
-class SomeModel:
-    def __init__(self):
-        self.state = None
-
-# Example of SomeService
-class SomeService:
-    def perform_operation(self):
-        print("Performing some operation...")
-        raise Exception("MY Exception")
-        return "Operation result"
-
-# Example of usage
-if __name__ == "__main__":
-    model = SomeModel()
-    service = SomeService()
-
-    def perform_action():
-        with OperationStateManager(model, service, "state") as state_manager:
-            try:
-                print(model.state)
-                service.perform_operation()
-            except Exception as e:
-                print(model.state)
-                raise Exception(f"An exception occurred: {e}")
-            
-            print(f"Not modifiying state: {model.state}")
+class LoggingMixin:
+    def __getattribute__(self, name):
+        # Skip logging for private or protected methods
+        if name.startswith('_'):
+            return super().__getattribute__(name)
         
-        # Caution: Should have the right indentation
-        print(f"Modifying state => Final state: {model.state}")
-        return model
-
-perform_action()
+        # Get the attribute (method or property)
+        attr = super().__getattribute__(name)
+        
+        # Check if the method is callable and if logging should be skipped
+        if callable(attr) and not getattr(attr, '__no_logging__', False):
+            @functools.wraps(attr)
+            def logged_method(*args, **kwargs):
+                logger = self.get_logger()  # Assuming the subclass provides a `get_logger` method
+                logger.info(f"Calling method {name} with args: {args}, kwargs: {kwargs}")
+                try:
+                    result = attr(*args, **kwargs)
+                    logger.info(f"Method {name} returned: {result}")
+                    return result
+                except Exception as e:
+                    logger.error(f"Method {name} raised an exception: {e}", exc_info=True)
+                    raise
+            return logged_method
+        else:
+            return attr
