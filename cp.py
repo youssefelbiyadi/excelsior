@@ -1,95 +1,150 @@
+from typing import Optional, List
+import uuid
+from datetime import datetime
 import logging
-import functools
 
-def no_logging(method):
-    """Decorator to mark a method as excluded from logging."""
-    method.__no_logging__ = True
-    return method
+@dataclass
+class Resource:
+    id: uuid.UUID
+    name: str
+    creation_date: datetime
+    update_date: Optional[datetime] = None
+    deletion_date: Optional[datetime] = None
+    tags: List[str] = field(default_factory=list)
 
-class LoggingMixin:
-    def __getattribute__(self, name):
-        # Skip logging for private or protected methods
-        if name.startswith('_'):
-            return super().__getattribute__(name)
-        
-        # Get the attribute (method or property)
-        attr = super().__getattribute__(name)
-        
-        # Check if the method is callable and if logging should be skipped
-        if callable(attr) and not getattr(attr, '__no_logging__', False):
-            @functools.wraps(attr)
-            def logged_method(*args, **kwargs):
-                logger = self.get_logger()  # Assuming the subclass provides a `get_logger` method
-                logger.info(f"Calling method {name} with args: {args}, kwargs: {kwargs}")
-                try:
-                    result = attr(*args, **kwargs)
-                    logger.info(f"Method {name} returned: {result}")
-                    return result
-                except Exception as e:
-                    logger.error(f"Method {name} raised an exception: {e}", exc_info=True)
-                    raise
-            return logged_method
-        else:
-            return attr
+class ResourceManager(LoggingMixin):
+    def __init__(self, logger: Optional[logging.Logger] = None):
+        super().__init__(logger)
+        self.resources = {}
 
-import unittest
-from unittest.mock import MagicMock, patch
-import logging
+    def create_resource(self, name: str, tags: Optional[List[str]] = None) -> Resource:
+        resource_id = uuid.uuid4()
+        resource = Resource(
+            id=resource_id,
+            name=name,
+            creation_date=datetime.now(),
+            tags=tags or []
+        )
+        self.resources[resource_id] = resource
+        self._log_internal_action("Created new resource", resource_id)
+        return resource
+
+    def get_resource(self, resource_id: uuid.UUID) -> Resource:
+        self._log_internal_action("Fetching resource", resource_id)
+        if resource_id in self.resources:
+            return self.resources[resource_id]
+        raise KeyError(f"Resource with ID {resource_id} not found")
+
+    def update_resource(self, resource_id: uuid.UUID, name: Optional[str] = None, tags: Optional[List[str]] = None) -> Resource:
+        self._log_internal_action("Updating resource", resource_id)
+        if resource_id in self.resources:
+            resource = self.resources[resource_id]
+            if name:
+                resource.name = name
+            if tags is not None:
+                resource.tags = tags
+            resource.update_date = datetime.now()
+            return resource
+        raise KeyError(f"Resource with ID {resource_id} not found")
+
+    def delete_resource(self, resource_id: uuid.UUID) -> Resource:
+        self._log_internal_action("Deleting resource", resource_id)
+        if resource_id in self.resources:
+            resource = self.resources[resource_id]
+            resource.deletion_date = datetime.now()
+            return resource
+        raise KeyError(f"Resource with ID {resource_id} not found")
+
+    @no_logging
+    def cleanup_resources(self):
+        """A method to clean up all resources marked as deleted. No logging should occur."""
+        to_remove = [rid for rid, res in self.resources.items() if res.deletion_date is not None]
+        for rid in to_remove:
+            del self.resources[rid]
+
+    def _log_internal_action(self, action: str, resource_id: uuid.UUID):
+        """Private method that logs internal actions, but should not be logged itself."""
+        print(f"Internal Log: {action} for Resource ID {resource_id}")
+
+
 
 import pytest
 import logging
+import uuid
 from unittest.mock import MagicMock, patch
-from your_module import LoggingMixin, ExampleOperations, no_logging
+from datetime import datetime
+from your_module import ResourceManager, Resource
 
 @pytest.fixture
 def mock_logger():
-    with patch.object(ExampleOperations, 'get_logger') as mock_get_logger:
+    with patch.object(ResourceManager, 'get_logger') as mock_get_logger:
         mock_logger = MagicMock()
         mock_get_logger.return_value = mock_logger
         yield mock_logger
 
 @pytest.fixture
-def example_operations():
-    return ExampleOperations("SampleObject")
+def resource_manager():
+    return ResourceManager()
 
-def test_create_method_logged(mock_logger, example_operations):
-    # Call the create method
-    result = example_operations.create()
+def test_create_resource_logged(mock_logger, resource_manager):
+    resource = resource_manager.create_resource(name="TestResource", tags=["tag1", "tag2"])
+    assert resource.name == "TestResource"
+    assert resource.tags == ["tag1", "tag2"]
+    assert isinstance(resource.id, uuid.UUID)
+    mock_logger.info.assert_any_call("Calling method create_resource with args: ('TestResource',), kwargs: {'tags': ['tag1', 'tag2']}")
+    mock_logger.info.assert_any_call(f"Method create_resource returned: {resource}")
 
-    # Assert the method returned the correct value
-    assert result == "Creating SampleObject"
+def test_get_resource_logged(mock_logger, resource_manager):
+    resource = resource_manager.create_resource(name="TestResource")
+    retrieved_resource = resource_manager.get_resource(resource.id)
+    assert retrieved_resource == resource
+    mock_logger.info.assert_any_call(f"Calling method get_resource with args: ({resource.id},), kwargs: {{}}")
+    mock_logger.info.assert_any_call(f"Method get_resource returned: {retrieved_resource}")
 
-    # Assert that logging was called correctly
-    mock_logger.info.assert_any_call("Calling method create with args: (), kwargs: {}")
-    mock_logger.info.assert_any_call("Method create returned: Creating SampleObject")
+def test_update_resource_logged(mock_logger, resource_manager):
+    resource = resource_manager.create_resource(name="TestResource")
+    updated_resource = resource_manager.update_resource(resource.id, name="UpdatedResource")
+    assert updated_resource.name == "UpdatedResource"
+    assert updated_resource.update_date is not None
+    mock_logger.info.assert_any_call(f"Calling method update_resource with args: ({resource.id},), kwargs: {{'name': 'UpdatedResource'}}")
+    mock_logger.info.assert_any_call(f"Method update_resource returned: {updated_resource}")
 
-def test_delete_method_not_logged(mock_logger, example_operations):
-    # Call the delete method
-    result = example_operations.delete()
+def test_delete_resource_logged(mock_logger, resource_manager):
+    resource = resource_manager.create_resource(name="TestResource")
+    deleted_resource = resource_manager.delete_resource(resource.id)
+    assert deleted_resource.deletion_date is not None
+    mock_logger.info.assert_any_call(f"Calling method delete_resource with args: ({resource.id},), kwargs: {{}}")
+    mock_logger.info.assert_any_call(f"Method delete_resource returned: {deleted_resource}")
 
-    # Assert the method returned the correct value
-    assert result == "Deleting SampleObject"
-
-    # Assert that logging was not called
+def test_cleanup_resources_not_logged(mock_logger, resource_manager):
+    resource_manager.create_resource(name="TestResource")
+    resource_manager.cleanup_resources()
     mock_logger.info.assert_not_called()
 
-def test_private_method_not_logged(mock_logger, example_operations):
-    # Call the private method
-    result = example_operations._private_method()
+def test_private_methods_not_logged(mock_logger, resource_manager):
+    resource = resource_manager.create_resource(name="TestResource")
+    resource_manager._log_internal_action("Testing private log", resource.id)
+    mock_logger.info.assert_any_call("Calling method create_resource with args: ('TestResource',), kwargs: {'tags': None}")
+    mock_logger.info.assert_any_call(f"Method create_resource returned: {resource}")
+    mock_logger.info.assert_not_called_with("Internal Log: Testing private log")
 
-    # Assert the method returned the correct value
-    assert result == "This is a private method"
+def test_get_nonexistent_resource_raises_error(mock_logger, resource_manager):
+    non_existent_id = uuid.uuid4()
+    with pytest.raises(KeyError, match=f"Resource with ID {non_existent_id} not found"):
+        resource_manager.get_resource(non_existent_id)
+    mock_logger.info.assert_any_call(f"Calling method get_resource with args: ({non_existent_id},), kwargs: {{}}")
+    mock_logger.error.assert_called_once()
 
-    # Assert that logging was not called
-    mock_logger.info.assert_not_called()
+def test_update_nonexistent_resource_raises_error(mock_logger, resource_manager):
+    non_existent_id = uuid.uuid4()
+    with pytest.raises(KeyError, match=f"Resource with ID {non_existent_id} not found"):
+        resource_manager.update_resource(non_existent_id, name="NewName")
+    mock_logger.info.assert_any_call(f"Calling method update_resource with args: ({non_existent_id},), kwargs: {{'name': 'NewName'}}")
+    mock_logger.error.assert_called_once()
 
-def test_update_method_logged(mock_logger, example_operations):
-    # Call the update method
-    result = example_operations.update()
-
-    # Assert the method returned the correct value
-    assert result == "Updating SampleObject"
-
-    # Assert that logging was called correctly
-    mock_logger.info.assert_any_call("Calling method update with args: (), kwargs: {}")
-    mock_logger.info.assert_any_call("Method update returned: Updating SampleObject")
+def test_delete_nonexistent_resource_raises_error(mock_logger, resource_manager):
+    non_existent_id = uuid.uuid4()
+    with pytest.raises(KeyError, match=f"Resource with ID {non_existent_id} not found"):
+        resource_manager.delete_resource(non_existent_id)
+    mock_logger.info.assert_any_call(f"Calling method delete_resource with args: ({non_existent_id},), kwargs: {{}}")
+    mock_logger.error.assert_called_once()
